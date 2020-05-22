@@ -130,8 +130,10 @@ async def closeRoom(code):
 	del rooms[code]
 
 async def removeFromRoom(code, username):
+	host = False;
 	if code in rooms:
 		if username in rooms[code]["players"]:
+			host = rooms[code]["players"][username]["host"]
 			del rooms[code]["scores"][username]
 			del rooms[code]["players"][username]
 			# Don't delete from the live scores, they will be removed when it is cleaned up at the end of the quiz
@@ -147,6 +149,19 @@ async def removeFromRoom(code, username):
 		else:
 			# Still some players connected to the room, so send a score update to show the player being removed.
 			await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
+			
+			if host:
+				# Removed player was a host, if they were the only host, then pick a new one
+				hosts_remaining = True in [player["host"] for player in rooms[code]["players"].values()]
+				if not hosts_remaining:
+					# Choose a random player, should be good enough to just pick the first player in rooms[code]["players"].keys()
+					await makeHost(code, list(rooms[code]["players"].keys())[0])
+
+async def makeHost(code, username):
+	player = rooms[code]["players"][username]
+	player["host"] = True
+	urls = {username: data["url"] for username, data in rooms[code]["players"].items()}
+	await player["message_queue"].put({"type": "host_promotion", "urls": urls})
 
 async def broadcastToRoom(code, message):
 	if code in rooms:
@@ -188,7 +203,6 @@ async def updateLiveScores(code, username, current_score, finished, quiz_time):
 			# Reset all the live scores ready for the next time startQuiz is called
 			rooms[code]["live_scores"] = {}
 
-		
 async def updateScores(code):
 	# Allocate points based on the live_scores
 
