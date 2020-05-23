@@ -1,9 +1,9 @@
 from quart import Quart, request, websocket
 import random, string, json, asyncio
 
-app = Quart(__name__);
+app = Quart(__name__)
 
-rooms = dict();
+rooms = dict()
 
 @app.route("/sporcle")
 async def hello_world():
@@ -34,7 +34,7 @@ async def ws():
 
 			elif message_type == "close_room" and code in rooms:
 				await closeRoom(code)
-				break;
+				break
 
 			elif message_type == "join_room":
 				username = message["username"]
@@ -45,14 +45,17 @@ async def ws():
 			elif message_type == "leave_room":
 				await broadcastToRoom(code, {"type": "removed_from_room", "username": username})
 				await removeFromRoom(code, username)
-				break;
+				break
+
+			elif message_type == "host_promotion":
+				await makeHost(code, message["username"])
+
+			elif message_type == "change_host":
+				await changeHost(code, username, message["username"])
 
 			elif message_type == "url_update":
 				url = message["url"]
 				await updateUrl(code, username, url)
-
-			elif message_type == "rooms_list":
-				response = {"type": "rooms_list", "rooms": list(rooms)}
 
 			elif message_type == "start_quiz":
 				await startQuiz(code)
@@ -61,7 +64,7 @@ async def ws():
 				await updateLiveScores(code, username, message["current_score"], message["finished"], message["quiz_time"])
 
 			elif message_type == "page_disconnect":
-				await updateLiveScores(code, username, None, True, None);
+				await updateLiveScores(code, username, None, True, None)
 
 			elif message_type == "change_quiz":
 				await broadcastToRoom(code, {"type": "change_quiz", "url": message["url"]})
@@ -99,7 +102,7 @@ async def createRoom(username, queue, url):
 	
 	print("There " + ("are" if len(rooms) != 1 else "is") + " now {0} room".format(len(rooms)) + ("s" if len(rooms) != 1 else ""), flush=True)
 	await queue.put({"type": "new_room_code", "room_code": code})
-	return code;
+	return code
 
 async def joinRoom(code, username, queue, url):
 	success = True
@@ -119,6 +122,8 @@ async def joinRoom(code, username, queue, url):
 	message = {"type": "join_room", "success": success}
 	if not success:
 		message.update({"fail_reason": fail_reason})
+	else:
+		message["hosts"] = [username for username, data in rooms[code]["players"].items() if data["host"]]
 
 	await queue.put(message)
 	await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
@@ -130,7 +135,7 @@ async def closeRoom(code):
 	del rooms[code]
 
 async def removeFromRoom(code, username):
-	host = False;
+	host = False
 	if code in rooms:
 		if username in rooms[code]["players"]:
 			host = rooms[code]["players"][username]["host"]
@@ -151,7 +156,10 @@ async def removeFromRoom(code, username):
 			await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
 			
 			if host:
-				# Removed player was a host, if they were the only host, then pick a new one
+				# Removed player was a host
+				await hostsUpdate(code)
+
+				# If they were the only host, then pick a new one
 				hosts_remaining = True in [player["host"] for player in rooms[code]["players"].values()]
 				if not hosts_remaining:
 					# Choose a random player, should be good enough to just pick the first player in rooms[code]["players"].keys()
@@ -162,6 +170,20 @@ async def makeHost(code, username):
 	player["host"] = True
 	urls = {username: data["url"] for username, data in rooms[code]["players"].items()}
 	await player["message_queue"].put({"type": "host_promotion", "urls": urls})
+	await hostsUpdate(code)
+
+async def removeHost(code, username):
+	player = rooms[code]["players"][username]
+	player["host"] = False
+	await hostsUpdate(code)
+
+async def changeHost(code, old, new):
+	await makeHost(code, new)
+	await removeHost(code, old)
+
+async def hostsUpdate(code):
+	hosts = [username for username, data in rooms[code]["players"].items() if data["host"]]
+	await broadcastToRoom(code, {"type": "hosts_update", "hosts": hosts})
 
 async def broadcastToRoom(code, message):
 	if code in rooms:
