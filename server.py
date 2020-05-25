@@ -5,11 +5,11 @@ app = Quart(__name__)
 
 rooms = dict()
 
-@app.route("/sporcle")
+@app.route("/xporcle")
 async def hello_world():
 	return "This URL is used for websocket communications with the <a href='https://github.com/ToranSharma/Xporcle-Server'>Xporcle Server</a> for <a href='https://github.com/ToranSharma/Xporcle-Extension'>Xporcle, the sporcle multiplayer browser extension</a>\n"
 
-@app.websocket("/sporcle")
+@app.websocket("/xporcle")
 async def ws():
 	code = None
 	username = None
