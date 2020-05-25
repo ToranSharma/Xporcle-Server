@@ -100,7 +100,7 @@ async def createRoom(username, queue, url):
 
 	rooms[code] = {
 		"players": {username: {"message_queue": queue, "host": True, "url": url}},
-		"scores": {username: 0},
+		"scores": {username: {"score": 0, "wins": 0}},
 		"live_scores": {}
 	}
 	
@@ -114,7 +114,7 @@ async def joinRoom(code, username, queue, url):
 	if code in rooms:
 		if username not in rooms[code]["players"]:
 			rooms[code]["players"].update({username: {"message_queue": queue, "host": False, "url": url}})
-			rooms[code]["scores"].update({username: 0})
+			rooms[code]["scores"].update({username: {"score": 0, "wins": 0}})
 		else:
 			success = False
 			fail_reason = "username taken"
@@ -235,6 +235,11 @@ async def updateScores(code):
 	score_list = [(username, quiz_data["score"], quiz_data["quiz_time"]) for username, quiz_data in rooms[code]["live_scores"].items()]
 	score_list.sort(key = lambda entry: entry[2]) # sort by quiz_time fist
 	score_list.sort(key = lambda entry: entry[1], reverse = True) # sort by score next
+
+	# Inrement number of wins for the winner.
+	winner = score_list[0][0]
+	if winner in rooms[code]["scores"]:
+		rooms[code]["scores"][winner]["wins"] += 1
 	
 	rankings = [entry[0] for entry in score_list]
 
@@ -242,7 +247,7 @@ async def updateScores(code):
 
 	for username, num_points in points.items():
 		if username in rooms[code]["scores"]:
-			rooms[code]["scores"][username] += num_points
+			rooms[code]["scores"][username]["score"] += num_points
 		else:
 			# The player left during the quiz, don't give them points
 			pass
