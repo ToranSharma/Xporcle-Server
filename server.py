@@ -7,7 +7,7 @@ rooms = dict()
 
 @app.route("/sporcle")
 async def hello_world():
-	return "This URL is used for websocket communications for the sporcle multiplayer browser extension\n"
+	return "This URL is used for websocket communications with the <a href='https://github.com/ToranSharma/Xporcle-Server'>Xporcle Server</a> for <a href='https://github.com/ToranSharma/Xporcle-Extension'>Xporcle, the sporcle multiplayer browser extension</a>\n"
 
 @app.websocket("/sporcle")
 async def ws():
@@ -68,6 +68,10 @@ async def ws():
 
 			elif message_type == "change_quiz":
 				await broadcastToRoom(code, {"type": "change_quiz", "url": message["url"]})
+
+			elif message_type == "suggest_quiz":
+				message["username"] = username
+				await sendToHosts(code, message)
 
 			else:
 				response = {"type": "error", "error": "unknown message type"}
