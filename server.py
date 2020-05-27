@@ -40,7 +40,11 @@ async def ws():
 				username = message["username"]
 				code = message["code"]
 				url = message["url"]
-				await joinRoom(code, username, queue, url)
+				response = await joinRoom(code, username, queue, url)
+				if not response["success"]:
+					username = None
+					code = None
+					url = None
 
 			elif message_type == "leave_room":
 				await broadcastToRoom(code, {"type": "removed_from_room", "username": username})
@@ -129,9 +133,11 @@ async def joinRoom(code, username, queue, url):
 	else:
 		message["hosts"] = [username for username, data in rooms[code]["players"].items() if data["host"]]
 
-	await queue.put(message)
-	await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
-	await sendToHosts(code, {"type": "url_update", "username": username, "url": url})
+	if success:
+		await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
+		await sendToHosts(code, {"type": "url_update", "username": username, "url": url})
+
+	return message;
 
 async def closeRoom(code):
 	message = {"type": "room_closed", "room_code": code}
