@@ -40,16 +40,25 @@ async def ws():
 				username = message["username"]
 				code = message["code"]
 				url = message["url"]
-				response = await joinRoom(code, username, queue, url)
-				if not response["success"]:
+				success = await joinRoom(code, username, queue, url)
+				if not success:
 					username = None
 					code = None
 					url = None
+
+			elif message_type == "load_room":
+				username = message["username"]
+				url = message["url"]
+				code = await loadRoom(username, queue, url, message["scores"])
+				response = {"type": "scores_update", "scores": rooms[code]["scores"]}
 
 			elif message_type == "leave_room":
 				await broadcastToRoom(code, {"type": "removed_from_room", "username": username})
 				await removeFromRoom(code, username)
 				break
+
+			elif message_type == "save_room":
+				response = {"type": "save_data", "data": rooms[code]["scores"]}
 
 			elif message_type == "host_promotion":
 				await makeHost(code, message["username"])
@@ -97,12 +106,24 @@ async def ws():
 		await broadcastToRoom(code, {"type": "removed_from_room", "username": username})
 		await removeFromRoom(code, username)
 
-async def createRoom(username, queue, url):
+def generateCode():
 	code = "".join(random.choices(string.ascii_letters + string.digits, k=8))
 	while code in rooms:
 		code = "".join(random.choices(string.ascii_letters + string.digits, k=8))
 
+	return code
+
+def allocateRoom():
+	code = generateCode()
+	rooms[code] = dict()
+
+	return code
+	
+async def createRoom(username, queue, url):
+	code = allocateRoom()
+
 	rooms[code] = {
+		"loaded": False,
 		"players": {username: {"message_queue": queue, "host": True, "url": url}},
 		"scores": {username: {"score": 0, "wins": 0}},
 		"live_scores": {}
@@ -118,7 +139,9 @@ async def joinRoom(code, username, queue, url):
 	if code in rooms:
 		if username not in rooms[code]["players"]:
 			rooms[code]["players"].update({username: {"message_queue": queue, "host": False, "url": url}})
-			rooms[code]["scores"].update({username: {"score": 0, "wins": 0}})
+
+			if not rooms[code]["loaded"] or username not in rooms[code]["scores"]:
+				rooms[code]["scores"].update({username: {"score": 0, "wins": 0}})
 		else:
 			success = False
 			fail_reason = "username taken"
@@ -133,11 +156,26 @@ async def joinRoom(code, username, queue, url):
 	else:
 		message["hosts"] = [username for username, data in rooms[code]["players"].items() if data["host"]]
 
+	await queue.put(message)
+
 	if success:
 		await broadcastToRoom(code, {"type": "scores_update", "scores": rooms[code]["scores"]})
 		await sendToHosts(code, {"type": "url_update", "username": username, "url": url})
 
-	return message;
+	return success;
+
+async def loadRoom(username, queue, url, scores):
+	code = allocateRoom()
+	rooms[code] = {
+		"loaded": True,
+		"players": {username: {"message_queue": queue, "host": True, "url": url}},
+		"scores": scores,
+		"live_scores": {}
+	}
+	
+	print("There " + ("are" if len(rooms) != 1 else "is") + " now {0} room".format(len(rooms)) + ("s" if len(rooms) != 1 else ""), flush=True)
+	await queue.put({"type": "new_room_code", "room_code": code})
+	return code
 
 async def closeRoom(code):
 	message = {"type": "room_closed", "room_code": code}
