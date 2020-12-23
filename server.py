@@ -70,6 +70,9 @@ async def ws():
 				url = message["url"]
 				await updateUrl(code, username, url)
 
+			elif message_type == "start_countdown":
+				await broadcastToRoom(code, {"type": "start_countdown"})
+
 			elif message_type == "start_quiz":
 				await startQuiz(code)
 
