@@ -16,6 +16,13 @@ class Room(Room):
         super().__init__(*args, **kargs)
         self._live_scores = {}
 
+    def add_user(self, user):
+        added = super().add_user(user)
+        if self.loaded:
+            if user.username in self.save_data["scores"]:
+                user.score = self.save_data["scores"][user.username]
+        return added
+
     @property
     def urls(self):
         return {username: self.users[username].url for username in self.users}
@@ -87,16 +94,13 @@ async def hello_world():
 
 @app.incoming_processing_step
 async def url_update(user, message):
-    step_responses = []
     if message["type"] == "url_update":
         url = message["url"]
         user.url = url
         await user.room.send_to_hosts({"type": "url_update", "username": user.username, "url": url})
-    return step_responses
 
 @app.incoming_processing_step
 async def live_scores_update(user, message):
-    step_responses = []
     if message["type"] == "live_scores_update":
         if message["finished"]:
             user.live_score["finished"] = True
@@ -104,46 +108,35 @@ async def live_scores_update(user, message):
             user.live_score["score"] = message["current_score"]
             user.live_score["quiz_time"] = message["quiz_time"]
         await user.room.send_live_scores_update()
-    return step_responses
 
 @app.incoming_processing_step
 async def start_countdown(user, message):
-    step_responses = []
     if message["type"] == "start_coutdown":
         user.room.broadcast({"type": "start_countdown"})
-    return step_responses
 
 @app.incoming_processing_step
 async def start_quiz(user, message):
-    step_responses = []
     if message["type"] == "start_quiz" and not user.room.quiz_running:
         user.room.reset_live_scores()
         await user.room.broadcast({"type": "start_quiz"})
-    return step_responses
 
 @app.incoming_processing_step
 async def page_disconnect(user, message):
-    step_responses = []
     if message["type"] == "page_disconnect":
         user.room.live_scores[user.username]["finished"] = True
         await user.room.send_live_scores_update()
-    return step_responses
 
 @app.incoming_processing_step
 async def change_quiz(user, message):
-    step_responses = []
     if message["type"] == "change_quiz":
         await user.room.broadcast({"type": "change_quiz", "url": message["url"]})
-    return step_responses
 
 @app.incoming_processing_step
 async def suggest_quiz(user, message):
-    step_responses = []
     if message["type"] == "suggest_quiz":
         suggestion_message = message.copy()
         suggestion_message["username"] = user.username
         user.room.send_to_hosts(suggestion_message)
-    return step_responses
 
 def calculatePoints(rankings):
     '''
@@ -180,5 +173,8 @@ async def host_promotion_add_urls(user, message):
     if message["type"] == "host_promotion":
         message["urls"] = user.room.urls
 
+@app.outgoing_processing_step
+async def log(user, message):
+    print("Sending to {}: {}".format(user.username,message), flush=True)
 
 app.websocket_rooms_route("/xporcle")
