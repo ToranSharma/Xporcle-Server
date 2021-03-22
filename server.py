@@ -136,7 +136,7 @@ async def suggest_quiz(user, message):
     if message["type"] == "suggest_quiz":
         suggestion_message = message.copy()
         suggestion_message["username"] = user.username
-        user.room.send_to_hosts(suggestion_message)
+        await user.room.send_to_hosts(suggestion_message)
 
 def calculatePoints(rankings):
     '''
@@ -174,7 +174,19 @@ async def host_promotion_add_urls(user, message):
         message["urls"] = user.room.urls
 
 @app.outgoing_processing_step
-async def log(user, message):
+async def save_room_add_scores(user, message):
+    if message["type"] == "save_room":
+        message["save_data"]["scores"] = user.room.scores
+
+'''
+@app.incoming_processing_step
+async def log_incoming(user, message):
+    print("Recieved from {}: {}".format(user.username,message), flush=True)
+
+@app.outgoing_processing_step
+async def log_outgoing(user, message):
     print("Sending to {}: {}".format(user.username,message), flush=True)
+
+'''
 
 app.websocket_rooms_route("/xporcle")
