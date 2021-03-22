@@ -111,8 +111,8 @@ async def live_scores_update(user, message):
 
 @app.incoming_processing_step
 async def start_countdown(user, message):
-    if message["type"] == "start_coutdown":
-        user.room.broadcast({"type": "start_countdown"})
+    if message["type"] == "start_countdown":
+        await user.room.broadcast({"type": "start_countdown"})
 
 @app.incoming_processing_step
 async def start_quiz(user, message):
