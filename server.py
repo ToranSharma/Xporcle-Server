@@ -42,10 +42,13 @@ class Room(Room):
         self._live_scores.update({username: self.users[username].live_score for username in self.users})
         return self._live_scores
         
-    def reset_live_scores(self):
-        _live_scores = {}
+    def initialise_live_scores(self):
         for username in self.users:
             self.users[username].live_score = {"score": 0, "finished": False, "quiz_time": 0}
+
+    def reset_live_scores(self):
+        for username in self.users:
+            self.users[username].live_score = None
 
     @property
     def quiz_running(self):
@@ -112,12 +115,15 @@ async def live_scores_update(user, message):
 @app.incoming_processing_step
 async def start_countdown(user, message):
     if message["type"] == "start_countdown":
-        await user.room.broadcast({"type": "start_countdown"})
+        if not user.room.quiz_running:
+            await user.room.broadcast({"type": "start_countdown"})
+        else:
+            await user.queue.put({"type": "error", "error": "Quiz still on going"})
 
 @app.incoming_processing_step
 async def start_quiz(user, message):
     if message["type"] == "start_quiz" and not user.room.quiz_running:
-        user.room.reset_live_scores()
+        user.room.initialise_live_scores()
         await user.room.broadcast({"type": "start_quiz"})
 
 @app.incoming_processing_step
@@ -178,7 +184,8 @@ async def save_room_add_scores(user, message):
     if message["type"] == "save_room":
         message["save_data"]["scores"] = user.room.scores
 
-'''
+
+''' DEBUGGING
 @app.incoming_processing_step
 async def log_incoming(user, message):
     print("Recieved from {}: {}".format(user.username,message), flush=True)
@@ -186,7 +193,6 @@ async def log_incoming(user, message):
 @app.outgoing_processing_step
 async def log_outgoing(user, message):
     print("Sending to {}: {}".format(user.username,message), flush=True)
-
 '''
 
 app.websocket_rooms_route("/xporcle")
