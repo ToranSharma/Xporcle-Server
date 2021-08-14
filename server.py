@@ -15,6 +15,8 @@ class Room(Room):
     def __init__(self, *args, **kargs):
         super().__init__(*args, **kargs)
         self._live_scores = {}
+        self.poll_data = None
+        self.vote_data = None
 
     def add_user(self, user):
         added = super().add_user(user)
@@ -41,7 +43,7 @@ class Room(Room):
     def live_scores(self):
         self._live_scores.update({username: self.users[username].live_score for username in self.users})
         return self._live_scores
-        
+
     def initialise_live_scores(self):
         for username in self.users:
             self.users[username].live_score = {"score": 0, "finished": False, "quiz_time": 0}
@@ -87,6 +89,21 @@ class Room(Room):
         if self.quiz_finished:
             await self.broadcast({"type": "quiz_finished"})
             await self.update_scores()
+
+    async def update_vote_data(self, votes):
+        self.vote_data["response_count"] += 1
+        self.vote_data["votes"] = [existing + new_vote for (existing, new_vote) in zip(self.vote_data["votes"],votes)]
+        if self.vote_data["response_count"] == self.vote_data["num_voters"]:
+            await self.finish_vote()
+        else:
+            await self.broadcast({"type": "vote_update", "vote_data": self.vote_data.copy()})
+
+    async def finish_vote(self):
+        if self.vote_data is not None:
+            self.vote_data["finished"] = True
+            self.vote_data["winner"] = self.vote_data["poll"]["entries"][self.vote_data["votes"].index(max(self.vote_data["votes"]))]
+            await self.broadcast({"type": "vote_update", "vote_data": self.vote_data.copy()})
+            self.vote_data = None
 
 
 app = WebSocketRooms(__name__, CustomRoomClass=Room, CustomUserClass=User)
@@ -144,9 +161,53 @@ async def suggest_quiz(user, message):
         suggestion_message["username"] = user.username
         await user.room.send_to_hosts(suggestion_message)
 
+''' Poll handling '''
+@app.incoming_processing_step
+async def poll_update(user, message):
+    if (
+        user.host
+        and (
+            message["type"] == "poll_create"
+            or message["type"] == "poll_data_update"
+        )
+    ):
+        user.room.poll_data = message["poll_data"]
+        await user.room.send_to_hosts(message.copy())
+
+@app.incoming_processing_step
+async def poll_start(user, message):
+    if user.host and message["type"] == "poll_start":
+        user.room.vote_data = {
+            "start_time": message["start_time"],
+            "duration": user.room.poll_data["duration"],
+            "response_count": 0,
+            "num_voters": len(user.room.users),
+            "poll": {
+                "entries": user.room.poll_data["entries"],
+                "start_time": message["start_time"],
+                "duration": user.room.poll_data["duration"]
+            },
+            "votes": [0 for entry in user.room.poll_data["entries"]],
+            "finished": False,
+        }
+        user.room.poll_data = None
+        await user.room.broadcast({"type": "poll_start", "vote_data": user.room.vote_data})
+
+        async def end_poll_after_duration(duration, room):
+            await asyncio.sleep(duration)
+            await room.finish_vote()
+
+        asyncio.create_task(end_poll_after_duration(user.room.vote_data["duration"], user.room))
+
+@app.incoming_processing_step
+async def poll_vote(user, message):
+    if message["type"] == "poll_vote":
+        votes = message["votes"]
+        await user.room.update_vote_data(votes);
+
 def calculatePoints(rankings):
     '''
-    Taking points for Mario Kart 8 system:
+    Taking points from Mario Kart 8 system:
     https://mariokart.fandom.com/wiki/Driver%27s_Points#Mario_Kart_8_and_Mario_Kart_8_Deluxe
     Points awared for first 12 places
     1st: 15, 2nd: 12, 3rd: 10, 4th-12th: 9 ... 1, >13th: 0
@@ -180,6 +241,11 @@ async def host_promotion_add_urls(user, message):
         message["urls"] = user.room.urls
 
 @app.outgoing_processing_step
+async def host_promotion_add_poll_data(user, message):
+    if message["type"] == "host_promotion":
+        message["poll_data"] = user.room.poll_data
+
+@app.outgoing_processing_step
 async def save_room_add_scores(user, message):
     if message["type"] == "save_room":
         message["save_data"]["scores"] = user.room.scores
@@ -196,3 +262,4 @@ async def log_outgoing(user, message):
 '''
 
 app.websocket_rooms_route("/xporcle")
+
