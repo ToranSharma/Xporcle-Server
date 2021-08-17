@@ -17,6 +17,7 @@ class Room(Room):
         self._live_scores = {}
         self.poll_data = None
         self.vote_data = None
+        self.quiz_queue = []
 
     def add_user(self, user):
         added = super().add_user(user)
@@ -205,6 +206,20 @@ async def poll_vote(user, message):
         votes = message["votes"]
         await user.room.update_vote_data(votes);
 
+@app.incoming_processing_step
+async def add_to_queue(user, message):
+    if user.host and message["type"] == "add_to_queue":
+        user.room.quiz_queue.append(message["quiz"])
+        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+
+@app.incoming_processing_step
+async def reorder_queue(user, message):
+    if user.host and message["type"] == "reorder_queue":
+        reordered_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
+        reordered_queue = reordered_queue[:message["index"]] + [message["quiz"]] + reordered_queue[message["index"]:]
+        user.room.quiz_queue = reordered_queue;
+        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+
 def calculatePoints(rankings):
     '''
     Taking points from Mario Kart 8 system:
@@ -231,6 +246,11 @@ async def join_room_add_hosts(user, message):
         message["hosts"] = list(user.room.hosts)
 
 @app.outgoing_processing_step
+async def join_room_add_quiz_queue(user, message):
+    if message["type"] == "join_room" and message["success"]:
+        message["queue"] = user.room.quiz_queue
+
+@app.outgoing_processing_step
 async def users_update_add_scores(user, message):
     if message["type"] == "users_update":
         message["scores"] = user.room.scores
@@ -244,6 +264,11 @@ async def host_promotion_add_urls(user, message):
 async def host_promotion_add_poll_data(user, message):
     if message["type"] == "host_promotion":
         message["poll_data"] = user.room.poll_data
+
+@app.outgoing_processing_step
+async def host_promotion_add_quiz_queue(user, message):
+    if message["type"] == "host_promotion":
+        message["queue"] = user.room.quiz_queue
 
 @app.outgoing_processing_step
 async def save_room_add_scores(user, message):
