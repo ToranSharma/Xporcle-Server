@@ -220,6 +220,12 @@ async def reorder_queue(user, message):
         user.room.quiz_queue = reordered_queue;
         await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
 
+@app.incoming_processing_step
+async def remove_from_queue(user, message):
+    if user.host and message["type"] == "remove_from_queue":
+        user.room.quiz_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
+        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+
 def calculatePoints(rankings):
     '''
     Taking points from Mario Kart 8 system:
