@@ -18,6 +18,7 @@ class Room(Room):
         self.poll_data = None
         self.vote_data = None
         self.quiz_queue = []
+        self.queue_interval = None
 
     def add_user(self, user):
         added = super().add_user(user)
@@ -90,6 +91,21 @@ class Room(Room):
         if self.quiz_finished:
             await self.broadcast({"type": "quiz_finished"})
             await self.update_scores()
+            if (len(self.quiz_queue) != 0
+                and self.queue_interval is not None
+            ):
+                # Automatically go to next quiz in queue after a wait
+                async def change_quiz_after_interval():
+                    await asyncio.sleep(self.queue_interval)
+                    if self.queue_interval is not None:
+                        # Check if auto next quiz has been disabled since waiting
+                        await self.broadcast({"type": "change_quiz", "url": self.quiz_queue[0]["url"]})
+                        self.quiz_queue = self.quiz_queue[1:]
+                        await self.broadcast(
+                            {"type": "queue_update", "queue": self.quiz_queue, "queue_interval": self.queue_interval}
+                        )
+
+                asyncio.create_task(change_quiz_after_interval())
 
     async def update_vote_data(self, votes):
         self.vote_data["response_count"] += 1
@@ -140,9 +156,17 @@ async def start_countdown(user, message):
 
 @app.incoming_processing_step
 async def start_quiz(user, message):
-    if message["type"] == "start_quiz" and not user.room.quiz_running:
+    if user.host and message["type"] == "start_quiz" and not user.room.quiz_running:
         user.room.initialise_live_scores()
         await user.room.broadcast({"type": "start_quiz"})
+        if (
+            len(user.room.quiz_queue) != 0
+            and user.url in user.room.quiz_queue[0]["url"]
+        ):
+            user.room.quiz_queue = user.room.quiz_queue[1:]
+            await user.room.broadcast(
+                {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+            )
 
 @app.incoming_processing_step
 async def page_disconnect(user, message):
@@ -210,7 +234,9 @@ async def poll_vote(user, message):
 async def add_to_queue(user, message):
     if user.host and message["type"] == "add_to_queue":
         user.room.quiz_queue.append(message["quiz"])
-        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+        await user.room.broadcast(
+            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+        )
 
 @app.incoming_processing_step
 async def reorder_queue(user, message):
@@ -218,13 +244,25 @@ async def reorder_queue(user, message):
         reordered_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
         reordered_queue = reordered_queue[:message["index"]] + [message["quiz"]] + reordered_queue[message["index"]:]
         user.room.quiz_queue = reordered_queue;
-        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+        await user.room.broadcast(
+            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+        )
 
 @app.incoming_processing_step
 async def remove_from_queue(user, message):
     if user.host and message["type"] == "remove_from_queue":
         user.room.quiz_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
-        await user.room.broadcast({"type": "queue_update", "queue": user.room.quiz_queue})
+        await user.room.broadcast(
+            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+        )
+
+@app.incoming_processing_step
+async def change_queue_interval(user, message):
+    if user.host and message["type"] == "change_queue_interval":
+        user.room.queue_interval = message["queue_interval"]
+        await user.room.broadcast(
+            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+        )
 
 def calculatePoints(rankings):
     '''
@@ -255,6 +293,7 @@ async def join_room_add_hosts(user, message):
 async def join_room_add_quiz_queue(user, message):
     if message["type"] == "join_room" and message["success"]:
         message["queue"] = user.room.quiz_queue
+        message["queue_interval"] = user.room.queue_interval
 
 @app.outgoing_processing_step
 async def users_update_add_scores(user, message):
@@ -275,6 +314,7 @@ async def host_promotion_add_poll_data(user, message):
 async def host_promotion_add_quiz_queue(user, message):
     if message["type"] == "host_promotion":
         message["queue"] = user.room.quiz_queue
+        message["queue_interval"] = user.room.queue_interval
 
 @app.outgoing_processing_step
 async def save_room_add_scores(user, message):
