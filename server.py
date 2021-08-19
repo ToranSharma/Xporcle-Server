@@ -96,15 +96,19 @@ class Room(Room):
             ):
                 # Automatically go to next quiz in queue after a wait
                 async def change_quiz_after_interval():
-                    await asyncio.sleep(self.queue_interval)
-                    if self.queue_interval is not None:
-                        # Check if auto next quiz has been disabled since waiting
+                    for i in range(int(self.queue_interval*10)):
+                        await asyncio.sleep(0.1)
+                        if self.queue_interval is None:
+                            # We have cancelled the auto change quiz
+                            await self.broadcast({"type": "cancel_change_quiz_countdown"})
+                            await self.broadcast(
+                                {"type": "queue_update", "queue": self.quiz_queue, "queue_interval": self.queue_interval}
+                            )
+                            break;
+                    else: # no break
                         await self.broadcast({"type": "change_quiz", "url": self.quiz_queue[0]["url"]})
-                        self.quiz_queue = self.quiz_queue[1:]
-                        await self.broadcast(
-                            {"type": "queue_update", "queue": self.quiz_queue, "queue_interval": self.queue_interval}
-                        )
 
+                await self.broadcast({"type": "start_change_quiz_countdown", "countdown_length": self.queue_interval})
                 asyncio.create_task(change_quiz_after_interval())
 
     async def update_vote_data(self, votes):
