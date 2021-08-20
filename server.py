@@ -51,6 +51,7 @@ class Room(Room):
             self.users[username].live_score = {"score": 0, "finished": False, "quiz_time": 0}
 
     def reset_live_scores(self):
+        self._live_scores = {}
         for username in self.users:
             self.users[username].live_score = None
 
