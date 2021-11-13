@@ -134,34 +134,31 @@ app = WebSocketRooms(__name__, CustomRoomClass=Room, CustomUserClass=User)
 async def hello_world():
     return "This URL is used for websocket communications with the <a href='https://github.com/ToranSharma/Xporcle-Server'>Xporcle Server</a> for <a href='https://github.com/ToranSharma/Xporcle-Extension'>Xporcle, the sporcle multiplayer browser extension</a>\n"
 
-@app.incoming_processing_step
+@app.incoming_processing_step("url_update")
 async def url_update(user, message):
-    if message["type"] == "url_update":
-        url = message["url"]
-        user.url = url
-        await user.room.send_to_hosts({"type": "url_update", "username": user.username, "url": url})
+    url = message["url"]
+    user.url = url
+    await user.room.send_to_hosts({"type": "url_update", "username": user.username, "url": url})
 
-@app.incoming_processing_step
+@app.incoming_processing_step("live_socres_update")
 async def live_scores_update(user, message):
-    if message["type"] == "live_scores_update":
-        if message["finished"]:
-            user.live_score["finished"] = True
-        else:
-            user.live_score["score"] = message["current_score"]
-            user.live_score["quiz_time"] = message["quiz_time"]
-        await user.room.send_live_scores_update()
+    if message["finished"]:
+        user.live_score["finished"] = True
+    else:
+        user.live_score["score"] = message["current_score"]
+        user.live_score["quiz_time"] = message["quiz_time"]
+    await user.room.send_live_scores_update()
 
-@app.incoming_processing_step
+@app.incoming_processing_step("start_countdown")
 async def start_countdown(user, message):
-    if message["type"] == "start_countdown":
-        if not user.room.quiz_running:
-            await user.room.broadcast({"type": "start_countdown"})
-        else:
-            await user.queue.put({"type": "error", "error": "Quiz still on going"})
+    if not user.room.quiz_running:
+        await user.room.broadcast({"type": "start_countdown"})
+    else:
+        await user.queue.put({"type": "error", "error": "Quiz still on going"})
 
-@app.incoming_processing_step
+@app.incoming_processing_step("start_quiz", require_host=True)
 async def start_quiz(user, message):
-    if user.host and message["type"] == "start_quiz" and not user.room.quiz_running:
+    if not user.room.quiz_running:
         user.room.initialise_live_scores()
         await user.room.broadcast({"type": "start_quiz"})
         if (
@@ -173,101 +170,85 @@ async def start_quiz(user, message):
                 {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
             )
 
-@app.incoming_processing_step
+@app.incoming_processing_step("page_disconnect")
 async def page_disconnect(user, message):
-    if message["type"] == "page_disconnect":
-        user.room.live_scores[user.username]["finished"] = True
-        await user.room.send_live_scores_update()
+    user.room.live_scores[user.username]["finished"] = True
+    await user.room.send_live_scores_update()
 
-@app.incoming_processing_step
+@app.incoming_processing_step("change_quiz")
 async def change_quiz(user, message):
-    if message["type"] == "change_quiz":
-        await user.room.broadcast({"type": "change_quiz", "url": message["url"]})
+    await user.room.broadcast({"type": "change_quiz", "url": message["url"]})
 
-@app.incoming_processing_step
+@app.incoming_processing_step("suggest_quiz")
 async def suggest_quiz(user, message):
-    if message["type"] == "suggest_quiz":
-        suggestion_message = message.copy()
-        suggestion_message["username"] = user.username
-        await user.room.send_to_hosts(suggestion_message)
+    suggestion_message = message.copy()
+    suggestion_message["username"] = user.username
+    await user.room.send_to_hosts(suggestion_message)
 
 ''' Poll handling '''
-@app.incoming_processing_step
+@app.incoming_processing_step("poll_create", "poll_data_update", require_host=True)
 async def poll_update(user, message):
-    if (
-        user.host
-        and (
-            message["type"] == "poll_create"
-            or message["type"] == "poll_data_update"
-        )
-    ):
-        user.room.poll_data = message["poll_data"]
-        await user.room.send_to_hosts(message.copy())
+    user.room.poll_data = message["poll_data"]
+    await user.room.send_to_hosts(message.copy())
 
-@app.incoming_processing_step
+@app.incoming_processing_step("poll_start", require_host=True)
 async def poll_start(user, message):
-    if user.host and message["type"] == "poll_start":
-        user.room.vote_data = {
+    user.room.vote_data = {
+        "start_time": message["start_time"],
+        "duration": user.room.poll_data["duration"],
+        "response_count": 0,
+        "num_voters": len(user.room.users),
+        "poll": {
+            "entries": user.room.poll_data["entries"],
             "start_time": message["start_time"],
-            "duration": user.room.poll_data["duration"],
-            "response_count": 0,
-            "num_voters": len(user.room.users),
-            "poll": {
-                "entries": user.room.poll_data["entries"],
-                "start_time": message["start_time"],
-                "duration": user.room.poll_data["duration"]
-            },
-            "votes": [0 for entry in user.room.poll_data["entries"]],
-            "finished": False,
-        }
-        user.room.poll_data = None
-        await user.room.broadcast({"type": "poll_start", "vote_data": user.room.vote_data})
+            "duration": user.room.poll_data["duration"]
+        },
+        "votes": [0 for entry in user.room.poll_data["entries"]],
+        "finished": False,
+    }
+    user.room.poll_data = None
+    await user.room.broadcast({"type": "poll_start", "vote_data": user.room.vote_data})
 
-        async def end_poll_after_duration(duration, room):
-            await asyncio.sleep(duration)
-            await room.finish_vote()
+    async def end_poll_after_duration(duration, room):
+        await asyncio.sleep(duration)
+        await room.finish_vote()
 
-        asyncio.create_task(end_poll_after_duration(user.room.vote_data["duration"], user.room))
+    asyncio.create_task(end_poll_after_duration(user.room.vote_data["duration"], user.room))
 
-@app.incoming_processing_step
+@app.incoming_processing_step("poll_vote")
 async def poll_vote(user, message):
-    if message["type"] == "poll_vote":
-        votes = message["votes"]
-        await user.room.update_vote_data(votes);
+    votes = message["votes"]
+    await user.room.update_vote_data(votes)
 
-@app.incoming_processing_step
+@app.incoming_processing_step("add_to_queue", require_host=True)
 async def add_to_queue(user, message):
-    if user.host and message["type"] == "add_to_queue":
-        user.room.quiz_queue.append(message["quiz"])
-        await user.room.broadcast(
-            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
-        )
+    user.room.quiz_queue.append(message["quiz"])
+    await user.room.broadcast(
+        {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+    )
 
-@app.incoming_processing_step
+@app.incoming_processing_step("reorder_queue", require_host=True)
 async def reorder_queue(user, message):
-    if user.host and message["type"] == "reorder_queue":
-        reordered_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
-        reordered_queue = reordered_queue[:message["index"]] + [message["quiz"]] + reordered_queue[message["index"]:]
-        user.room.quiz_queue = reordered_queue;
-        await user.room.broadcast(
-            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
-        )
+    reordered_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
+    reordered_queue = reordered_queue[:message["index"]] + [message["quiz"]] + reordered_queue[message["index"]:]
+    user.room.quiz_queue = reordered_queue;
+    await user.room.broadcast(
+        {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+    )
 
-@app.incoming_processing_step
+@app.incoming_processing_step("remove_from_room", require_host=True)
 async def remove_from_queue(user, message):
-    if user.host and message["type"] == "remove_from_queue":
-        user.room.quiz_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
-        await user.room.broadcast(
-            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
-        )
+    user.room.quiz_queue = [quiz for quiz in user.room.quiz_queue if quiz["url"] != message["quiz"]["url"]]
+    await user.room.broadcast(
+        {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+    )
 
-@app.incoming_processing_step
+@app.incoming_processing_step("change_queue_interval", require_host=True)
 async def change_queue_interval(user, message):
-    if user.host and message["type"] == "change_queue_interval":
-        user.room.queue_interval = message["queue_interval"]
-        await user.room.broadcast(
-            {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
-        )
+    user.room.queue_interval = message["queue_interval"]
+    await user.room.broadcast(
+        {"type": "queue_update", "queue": user.room.quiz_queue, "queue_interval": user.room.queue_interval}
+    )
 
 def calculatePoints(rankings):
     '''
@@ -289,50 +270,45 @@ def calculatePoints(rankings):
     return dict(zip(rankings, points))
 
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("join_room")
 async def join_room_add_hosts(user, message):
-    if message["type"] == "join_room" and message["success"]:
+    if message["success"]:
         message["hosts"] = list(user.room.hosts)
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("join_room")
 async def join_room_add_quiz_queue(user, message):
-    if message["type"] == "join_room" and message["success"]:
+    if message["success"]:
         message["queue"] = user.room.quiz_queue
         message["queue_interval"] = user.room.queue_interval
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("users_update")
 async def users_update_add_scores(user, message):
-    if message["type"] == "users_update":
-        message["scores"] = user.room.scores
+    message["scores"] = user.room.scores
         
-@app.outgoing_processing_step
+@app.outgoing_processing_step("host_promotion")
 async def host_promotion_add_urls(user, message):
-    if message["type"] == "host_promotion":
-        message["urls"] = user.room.urls
+    message["urls"] = user.room.urls
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("host_promotion")
 async def host_promotion_add_poll_data(user, message):
-    if message["type"] == "host_promotion":
-        message["poll_data"] = user.room.poll_data
+    message["poll_data"] = user.room.poll_data
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("host_promotion")
 async def host_promotion_add_quiz_queue(user, message):
-    if message["type"] == "host_promotion":
-        message["queue"] = user.room.quiz_queue
-        message["queue_interval"] = user.room.queue_interval
+    message["queue"] = user.room.quiz_queue
+    message["queue_interval"] = user.room.queue_interval
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step("save_room")
 async def save_room_add_scores(user, message):
-    if message["type"] == "save_room":
-        message["save_data"]["scores"] = user.room.scores
+    message["save_data"]["scores"] = user.room.scores
 
 
 ''' DEBUGGING
-@app.incoming_processing_step
+@app.incoming_processing_step()
 async def log_incoming(user, message):
     print("Recieved from {}: {}".format(user.username,message), flush=True)
 
-@app.outgoing_processing_step
+@app.outgoing_processing_step()
 async def log_outgoing(user, message):
     print("Sending to {}: {}".format(user.username,message), flush=True)
 '''
